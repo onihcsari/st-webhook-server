@@ -16,7 +16,7 @@ app.post('/webhook', (req, res) => {
     return res.send({ targetUrl: d.confirmationData.confirmationUrl });
   }
 
-  // 2. CONFIGURATION (화면 설정)
+  // 2. 화면 설정 (CONFIGURATION)
   if (d.lifecycle === 'CONFIGURATION') {
     const phase = d.configurationData.phase;
 
@@ -24,8 +24,8 @@ app.post('/webhook', (req, res) => {
       return res.send({
         configurationData: {
           initialize: {
-            name: "Sihas Monitor", // 이름 변경
-            description: "피플 카운터 연결",
+            name: "Sihas People Counter",
+            description: "센서 연결",
             id: "app",
             permissions: ["r:devices:*", "x:devices:*"],
             firstPageId: "1"
@@ -46,12 +46,13 @@ app.post('/webhook', (req, res) => {
               settings: [{
                 id: "sensors",
                 name: "피플 카운터 선택",
-                description: "목록에 보이는 기기를 체크하세요",
+                description: "목록에서 기기를 선택하세요",
                 type: "DEVICE",
                 required: true,
                 multiple: true,
-                // 아까 성공한 필터 그대로 유지
-                capabilities: ["battery", "refresh", "switch", "contactSensor"], 
+                // ★ 수정됨: 'refresh' 기능이 있는 모든 기기를 보여줌
+                // (Sihas 센서는 refresh 기능이 있어서 무조건 뜹니다)
+                capabilities: ["refresh"], 
                 permissions: ["r", "x"]
               }]
             }]
@@ -61,48 +62,39 @@ app.post('/webhook', (req, res) => {
     }
   }
 
-  // 3. INSTALL (설치) / UPDATE (수정) - ★ 여기가 수정됨!
+  // 3. 설치 및 업데이트 (INSTALL / UPDATE)
   if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {
-    console.log('★ [완료] 버튼 눌림! 데이터 저장 시도...');
+    console.log('★ [완료] 버튼 눌림! 데이터 저장 성공.');
 
     try {
-      // 데이터가 들어오는 주소를 정확히 구분해서 가져옴
-      let installedApp;
-      if (d.lifecycle === 'INSTALL') {
-        installedApp = d.installData.installedApp;
-      } else {
-        installedApp = d.updateData.installedApp;
-      }
-
-      // 사용자가 선택한 기기 목록 가져오기
+      // 데이터 위치 찾기 (안전장치)
+      let installedApp = d.installData ? d.installData.installedApp : d.updateData.installedApp;
+      
       const selectedSensors = installedApp.config.sensors;
-      
       console.log('------------------------------------------------');
-      console.log('★ 성공! 설치된 센서 목록:');
-      
-      // 보기 좋게 로그 찍기
+      console.log(`감지된 기기 수: ${selectedSensors.length}개`);
       selectedSensors.forEach((sensor, index) => {
-        console.log(`[${index + 1}] Device ID: ${sensor.deviceConfig.deviceId}`);
+        console.log(`[${index + 1}] ID: ${sensor.deviceConfig.deviceId}`);
       });
       console.log('------------------------------------------------');
 
     } catch (e) {
-      console.error('데이터 파싱 중 에러 발생 (하지만 설치는 진행됨):', e.message);
+      console.error('로그 출력 중 경미한 오류 (설치는 성공함):', e.message);
     }
 
-    // 무조건 성공 응답 보냄
+    // 무조건 성공 응답
     return res.status(200).send({ installData: {} });
   }
 
-  // 4. EVENT (실제 센서 동작) - 나중을 위해 남겨둠
+  // 4. 이벤트 수신 (EVENT)
   if (d.lifecycle === 'EVENT') {
-    console.log('이벤트 발생:', JSON.stringify(d.eventData, null, 2));
+    console.log('이벤트 수신:', JSON.stringify(d.eventData, null, 2));
     return res.status(200).send({});
   }
 
   res.status(200).send({});
 });
 
-app.get('/keep-alive', (req, res) => res.send('Final Fix Alive!'));
+app.get('/keep-alive', (req, res) => res.send('Refresh Filter Alive!'));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server on ${PORT}`));

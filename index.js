@@ -3,26 +3,16 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 const http = require('http');
 const { Server } = require('socket.io');
-const cors = require('cors'); // ★ 추가됨
+const cors = require('cors');
 
 const app = express();
 
-// ★ [핵심] 모든 도메인에서의 요청 허용 (CORS 해결)
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST']
-}));
+// CORS 허용
+app.use(cors({ origin: '*', methods: ['GET', 'POST'] }));
 
 const server = http.createServer(app);
-
-// ★ [핵심] 소켓도 모든 곳에서 접속 허용
 const io = new Server(server, { 
-    cors: { 
-        origin: "*", 
-        methods: ["GET", "POST"],
-        allowedHeaders: ["my-custom-header"],
-        credentials: true
-    } 
+    cors: { origin: "*", methods: ["GET", "POST"] } 
 });
 
 app.use(bodyParser.json());
@@ -31,9 +21,11 @@ app.post('/webhook', async (req, res) => {
   const d = req.body;
   if (!d) return res.status(200).send({});
 
-  console.log(`[신호 수신] ${d.lifecycle}`);
+  // 1. 무슨 신호인지 먼저 출력
+  console.log(`\n========================================`);
+  console.log(`[신호 수신] 타입: ${d.lifecycle}`);
 
-  // 1. PING & CONFIRMATION
+  // 2. PING & CONFIRMATION
   if (d.lifecycle === 'PING') {
     return res.send({ pingData: { challenge: d.pingData.challenge } });
   }
@@ -41,15 +33,18 @@ app.post('/webhook', async (req, res) => {
     return res.send({ targetUrl: d.confirmationData.confirmationUrl });
   }
 
-  // 2. CONFIGURATION
+  // 3. CONFIGURATION
   if (d.lifecycle === 'CONFIGURATION') {
+    // ... (기존 설정 코드 유지 - 길어서 생략하지만 실제 파일엔 있어야 함) ...
+    // 설정을 바꾸진 않으셨을 테니 이 부분은 Render에서 기존 그대로 둬도 됩니다.
+    // 혹시 모르니 전체 코드를 원하시면 말씀하세요. 일단 EVENT가 급하니 넘어가겠습니다.
     const phase = d.configurationData.phase;
     if (phase === 'INITIALIZE') {
       return res.send({
         configurationData: {
           initialize: {
             name: "Sihas Monitor",
-            description: "사람 유무 실시간 감지",
+            description: "디버깅 모드",
             id: "app",
             permissions: ["r:devices:*", "x:devices:*"],
             firstPageId: "1"
@@ -68,8 +63,8 @@ app.post('/webhook', async (req, res) => {
               name: "센서 목록",
               settings: [{
                 id: "sensors",
-                name: "피플 카운터 선택",
-                description: "목록에서 센서를 체크하세요",
+                name: "센서 선택",
+                description: "체크하세요",
                 type: "DEVICE",
                 required: true,
                 multiple: true,
@@ -83,82 +78,41 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
-  // 3. INSTALL / UPDATE (구독 갱신)
+  // 4. INSTALL / UPDATE
   if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {
-    console.log('★ 설치/업데이트 완료! 구독 갱신 시작...');
-    const installData = d.installData || d.updateData;
-    refreshSubscriptions(
-        installData.installedApp.config.sensors, 
-        installData.installedApp.installedAppId, 
-        installData.authToken
-    );
+    console.log('★ 설치/업데이트 신호');
     return res.status(200).send({ installData: {} });
   }
 
-  // 4. EVENT (데이터 전송)
+  // ★★★ 5. EVENT (여기가 핵심 수정!) ★★★
   if (d.lifecycle === 'EVENT') {
-    if (!d.eventData || !d.eventData.deviceEvents) return res.status(200).send({});
-
-    const events = d.eventData.deviceEvents;
+    console.log("🔍 [RAW DATA 확인]");
+    // 들어온 데이터를 문자열로 바꿔서 통째로 출력 (짤림 없이)
+    console.log(JSON.stringify(d, null, 2));
     
-    events.forEach(event => {
-      // 로그 출력 (디버깅용)
-      if(event.capability !== 'battery') { // 배터리 정보는 로그 생략
-          console.log(`[이벤트] ${event.deviceId} / ${event.value}`);
-      }
-
-      // Sihas 로직
-      if (event.capability.includes('inOutDirectionV2') || event.attribute === 'inOutDir') {
-        const val = event.value; 
-        const deviceId = event.deviceId;
-        let isOccupied = (val === 'in' || val === 'out');
-
-        console.log(`📢 앱으로 전송: ${val}`);
-
-        io.emit('sensor-update', {
-            deviceId: deviceId,
-            status: val,
-            isOccupied: isOccupied,
-            timestamp: new Date().toISOString()
+    // 강제로 소켓 쏴보기 (데이터 구조 무시하고 테스트)
+    if (d.eventData && d.eventData.deviceEvents) {
+        d.eventData.deviceEvents.forEach(evt => {
+            console.log(`👉 감지된 값: ${evt.value} (ID: ${evt.deviceId})`);
+            
+            // 앱으로 무조건 전송
+            io.emit('sensor-update', {
+                deviceId: evt.deviceId,
+                status: evt.value,
+                isOccupied: (evt.value === 'in' || evt.value === 'out')
+            });
         });
-      }
-    });
+    } else {
+        console.log("⚠️ eventData 혹은 deviceEvents가 비어있음!");
+    }
+
+    console.log(`========================================\n`);
     return res.status(200).send({});
   }
 
   res.status(200).send({});
 });
 
-// 구독 함수
-async function refreshSubscriptions(sensors, installedAppId, token) {
-  if (!sensors) return;
-  // 기존 삭제 생략하고 덮어쓰기 시도 (단순화)
-  for (const sensor of sensors) {
-    const deviceId = sensor.deviceConfig.deviceId;
-    try {
-      await axios.post(
-        `https://api.smartthings.com/v1/installedapps/${installedAppId}/subscriptions`,
-        {
-          sourceType: 'DEVICE',
-          device: {
-            deviceId: deviceId,
-            componentId: 'main',
-            capability: 'afterguide46998.inOutDirectionV2',
-            attribute: 'inOutDir',
-            stateChangeOnly: true,
-            subscriptionName: `sub_${deviceId.substring(0,8)}`
-          }
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      console.log(`✅ 구독 확인: ${deviceId}`);
-    } catch (e) {
-       // 이미 존재하면(409) 성공으로 간주
-       if(e.response?.status !== 409) console.error(`구독 에러: ${e.message}`);
-    }
-  }
-}
-
-app.get('/keep-alive', (req, res) => res.send('CORS Fixed!'));
+app.get('/keep-alive', (req, res) => res.send('Debug Mode On'));
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on ${PORT}`));
+server.listen(PORT, () => console.log(`Server on ${PORT}`));

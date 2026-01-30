@@ -32,31 +32,32 @@ app.post('/webhook', (req, res) => {
       });
     }
 
-    if (phase === 'PAGE') {
+if (phase === 'PAGE') {
       return res.send({
         configurationData: {
           page: {
             pageId: "1",
-            name: "기기 선택",
+            name: "시하스 센서 등록",
             complete: true,
             sections: [{
-              name: "기기 목록",
+              name: "센서 목록",
               settings: [{
                 id: "sensors",
-                name: "연결할 기기 선택",
-                description: "목록에 보이는 기기를 체크하세요",
+                name: "피플 카운터 센서 선택",
+                description: "목록에서 8개 센서를 모두 체크하세요",
                 type: "DEVICE",
                 required: true,
                 multiple: true,
-                // ★ 여기가 핵심 수정 사항! (필터를 넓혔습니다)
-                capabilities: ["contactSensor", "MotionSensor", "switch", "light", "button"], 
+                // ★ 여기가 수정된 부분입니다!
+                // 이 기기가 가진 'battery'와 'refresh' 능력으로 찾습니다.
+                capabilities: ["battery", "refresh"], 
                 permissions: ["r", "x"]
               }]
             }]
           }
         }
       });
-    }
+    }  
   }
 
   if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {

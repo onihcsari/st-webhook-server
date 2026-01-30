@@ -12,6 +12,10 @@ app.use(bodyParser.json());
 
 app.post('/webhook', async (req, res) => {
   const d = req.body;
+  
+  // d가 없을 경우를 대비한 방어 코드
+  if (!d) return res.status(200).send({});
+
   console.log(`[신호 수신] ${d.lifecycle}`);
 
   // 1. PING & CONFIRMATION
@@ -66,32 +70,34 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
-  // 3. INSTALL / UPDATE (★ 여기가 수정되었습니다!)
+  // 3. INSTALL / UPDATE (구독 신청)
   if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {
     console.log('★ 설치/업데이트 완료! 구독 시작...');
 
-    // 데이터 위치 정확히 잡기
     const installData = d.installData || d.updateData;
-    
-    // [수정 핵심] 토큰은 installData 안에 들어있습니다!
     const authToken = installData.authToken; 
     
     const installedApp = installData.installedApp;
     const installedAppId = installedApp.installedAppId;
     const sensors = installedApp.config.sensors;
 
-    // 비동기로 구독 신청
     subscribeToSihas(sensors, installedAppId, authToken);
 
     return res.status(200).send({ installData: {} });
   }
 
-  // 4. EVENT (이벤트 수신)
+  // 4. EVENT (이벤트 수신) - ★ 여기가 에러나던 곳 (수정됨)
   if (d.lifecycle === 'EVENT') {
+    // [안전장치] eventData가 없거나 deviceEvents가 비어있으면 그냥 종료
+    if (!d.eventData || !d.eventData.deviceEvents) {
+        console.log('⚠️ 빈 이벤트 신호 수신 (무시함)');
+        return res.status(200).send({});
+    }
+
     const events = d.eventData.deviceEvents;
     
     events.forEach(event => {
-      // Sihas 센서 로직 (ready / in / out)
+      // Sihas 센서 로직
       if (event.capability.includes('inOutDirectionV2') || event.attribute === 'inOutDir') {
         
         const val = event.value; 
@@ -110,7 +116,6 @@ app.post('/webhook', async (req, res) => {
 
         console.log(`[센서 감지] ${deviceId} : ${statusText}`);
 
-        // Ionic 앱으로 쏘기
         io.emit('sensor-update', {
             deviceId: deviceId,
             status: val,
@@ -127,10 +132,10 @@ app.post('/webhook', async (req, res) => {
 
 // [구독 함수]
 async function subscribeToSihas(sensors, installedAppId, token) {
+  if (!sensors || !Array.isArray(sensors)) return; // 안전장치 추가
+
   for (const sensor of sensors) {
     const deviceId = sensor.deviceConfig.deviceId;
-    
-    // 정확한 Capability 입력
     const customCapability = 'afterguide46998.inOutDirectionV2';
     const customAttribute = 'inOutDir';
 
@@ -148,7 +153,7 @@ async function subscribeToSihas(sensors, installedAppId, token) {
             subscriptionName: `sub_${deviceId.substring(0,6)}`
           }
         },
-        { headers: { Authorization: `Bearer ${token}` } } // 이제 올바른 토큰이 들어갑니다!
+        { headers: { Authorization: `Bearer ${token}` } }
       );
       console.log(`✅ 구독 성공! (${deviceId})`);
     } catch (e) {
@@ -157,6 +162,6 @@ async function subscribeToSihas(sensors, installedAppId, token) {
   }
 }
 
-app.get('/keep-alive', (req, res) => res.send('Token Fixed!'));
+app.get('/keep-alive', (req, res) => res.send('Safety Patch Applied!'));
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server on ${PORT}`));

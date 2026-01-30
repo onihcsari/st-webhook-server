@@ -49,7 +49,7 @@ app.post('/webhook', (req, res) => {
                 required: true,
                 multiple: true,
                 // ★ 여기가 핵심 수정 사항! (필터를 넓혔습니다)
-                capabilities: ["contactSensor", "motionSensor", "switch", "light", "button"], 
+                capabilities: ["contactSensor", "MotionSensor", "switch", "light", "button"], 
                 permissions: ["r", "x"]
               }]
             }]

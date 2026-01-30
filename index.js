@@ -3,16 +3,32 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 const http = require('http');
 const { Server } = require('socket.io');
+const cors = require('cors'); // ★ 추가됨
 
 const app = express();
+
+// ★ [핵심] 모든 도메인에서의 요청 허용 (CORS 해결)
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST']
+}));
+
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+
+// ★ [핵심] 소켓도 모든 곳에서 접속 허용
+const io = new Server(server, { 
+    cors: { 
+        origin: "*", 
+        methods: ["GET", "POST"],
+        allowedHeaders: ["my-custom-header"],
+        credentials: true
+    } 
+});
 
 app.use(bodyParser.json());
 
 app.post('/webhook', async (req, res) => {
   const d = req.body;
-  
   if (!d) return res.status(200).send({});
 
   console.log(`[신호 수신] ${d.lifecycle}`);
@@ -67,46 +83,37 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
-  // 3. INSTALL / UPDATE (★수정됨: 청소 후 구독)
+  // 3. INSTALL / UPDATE (구독 갱신)
   if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {
-    console.log('★ 설치/업데이트 신호 수신!');
-
+    console.log('★ 설치/업데이트 완료! 구독 갱신 시작...');
     const installData = d.installData || d.updateData;
-    const authToken = installData.authToken;
-    const installedAppId = installData.installedApp.installedAppId;
-    const sensors = installData.installedApp.config.sensors;
-
-    // [중요] 기존 구독을 모두 지우고 다시 등록합니다 (비동기 처리)
-    refreshSubscriptions(sensors, installedAppId, authToken);
-
+    refreshSubscriptions(
+        installData.installedApp.config.sensors, 
+        installData.installedApp.installedAppId, 
+        installData.authToken
+    );
     return res.status(200).send({ installData: {} });
   }
 
-  // 4. EVENT
+  // 4. EVENT (데이터 전송)
   if (d.lifecycle === 'EVENT') {
-    if (!d.eventData || !d.eventData.deviceEvents) {
-        return res.status(200).send({});
-    }
+    if (!d.eventData || !d.eventData.deviceEvents) return res.status(200).send({});
 
     const events = d.eventData.deviceEvents;
     
     events.forEach(event => {
+      // 로그 출력 (디버깅용)
+      if(event.capability !== 'battery') { // 배터리 정보는 로그 생략
+          console.log(`[이벤트] ${event.deviceId} / ${event.value}`);
+      }
+
+      // Sihas 로직
       if (event.capability.includes('inOutDirectionV2') || event.attribute === 'inOutDir') {
         const val = event.value; 
         const deviceId = event.deviceId;
-        
-        let isOccupied = false;
-        let statusText = "사람 없음 (빈 방)";
+        let isOccupied = (val === 'in' || val === 'out');
 
-        if (val === 'in' || val === 'out') {
-            isOccupied = true;
-            statusText = `🚨 사람 감지됨! (${val})`;
-        } else if (val === 'ready') {
-            isOccupied = false;
-            statusText = "🟢 사람 없음 (Ready)";
-        }
-
-        console.log(`[센서 감지] ${deviceId} : ${statusText}`);
+        console.log(`📢 앱으로 전송: ${val}`);
 
         io.emit('sensor-update', {
             deviceId: deviceId,
@@ -122,40 +129,12 @@ app.post('/webhook', async (req, res) => {
   res.status(200).send({});
 });
 
-// [핵심 함수] 지우고 -> 다시 구독
+// 구독 함수
 async function refreshSubscriptions(sensors, installedAppId, token) {
-  if (!sensors || !Array.isArray(sensors)) return;
-
-  console.log('🧹 기존 구독 삭제 시작...');
-  
-  try {
-    // 1. 기존 구독 목록 가져오기
-    const response = await axios.get(
-      `https://api.smartthings.com/v1/installedapps/${installedAppId}/subscriptions`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    
-    const oldSubscriptions = response.data.items || [];
-    
-    // 2. 하나씩 삭제하기 (Bulk delete는 가끔 에러나서 안전하게 하나씩 지움)
-    for (const sub of oldSubscriptions) {
-        await axios.delete(
-            `https://api.smartthings.com/v1/installedapps/${installedAppId}/subscriptions/${sub.subscriptionId}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-        );
-    }
-    console.log('✨ 청소 완료! 새 구독 시작...');
-
-  } catch (e) {
-    console.log('청소 중 에러(무시 가능):', e.message);
-  }
-
-  // 3. 새 구독 등록
+  if (!sensors) return;
+  // 기존 삭제 생략하고 덮어쓰기 시도 (단순화)
   for (const sensor of sensors) {
     const deviceId = sensor.deviceConfig.deviceId;
-    const customCapability = 'afterguide46998.inOutDirectionV2';
-    const customAttribute = 'inOutDir';
-
     try {
       await axios.post(
         `https://api.smartthings.com/v1/installedapps/${installedAppId}/subscriptions`,
@@ -164,26 +143,22 @@ async function refreshSubscriptions(sensors, installedAppId, token) {
           device: {
             deviceId: deviceId,
             componentId: 'main',
-            capability: customCapability,
-            attribute: customAttribute,
+            capability: 'afterguide46998.inOutDirectionV2',
+            attribute: 'inOutDir',
             stateChangeOnly: true,
             subscriptionName: `sub_${deviceId.substring(0,8)}`
           }
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      console.log(`✅ 재구독 성공! (${deviceId})`);
+      console.log(`✅ 구독 확인: ${deviceId}`);
     } catch (e) {
-      // 만약 그래도 충돌나면(409), 이미 되어있는 거니까 성공으로 간주
-      if (e.response && e.response.status === 409) {
-          console.log(`⚠️ 이미 구독됨 (성공으로 간주): ${deviceId}`);
-      } else {
-          console.error(`❌ 구독 실패 (${deviceId}):`, e.response?.data || e.message);
-      }
+       // 이미 존재하면(409) 성공으로 간주
+       if(e.response?.status !== 409) console.error(`구독 에러: ${e.message}`);
     }
   }
 }
 
-app.get('/keep-alive', (req, res) => res.send('Clean & Subscribe Logic!'));
+app.get('/keep-alive', (req, res) => res.send('CORS Fixed!'));
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server on ${PORT}`));
+server.listen(PORT, () => console.log(`Server running on ${PORT}`));

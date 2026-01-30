@@ -1,57 +1,80 @@
 const express = require('express');
-const { SmartApp } = require('@smartthings/smartapp');
-const { Server } = require('socket.io');
-const http = require('http');
+const bodyParser = require('body-parser');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+app.use(bodyParser.json());
 
-// 1. 삼성 공식 SDK 설정
-const smartApp = new SmartApp()
-  .enableEventLogging(2) // 로그 자세히 보기
-  .configureI18n()
-  .page('mainPage', (context, page, configData) => {
-    // 앱 설정 화면 (스마트폰에 뜰 화면)
-    page.section('센서 설정', section => {
-      section.deviceSetting('sensors')
-        .capabilities(['contactSensor'])
-        .permissions('rx') // 읽기(r), 실행(x) 권한 요청
-        .required(true)
-        .multiple(true)
-        .name('감지할 센서 선택');
-    });
-  })
-  .updated(async (context, updateData) => {
-    // 설치/업데이트 완료 시 실행
-    console.log('앱 설치 완료/업데이트됨!');
-    // 구독(Subscription) 자동 등록
-    await context.api.subscriptions.subscribeToDevices(
-      context.config.sensors, 
-      'contactSensor', 
-      'contact', 
-      'myDeviceEventHandler'
-    );
-  })
-  .subscribedEventHandler('myDeviceEventHandler', (context, event) => {
-    // 실제 센서 이벤트 발생 시 실행
-    console.log(`센서 감지: ${event.deviceId} -> ${event.value}`);
-    io.emit('sensor-update', {
-      deviceId: event.deviceId,
-      value: event.value
-    });
-  });
+// 로그 찍어서 신호 오는지 눈으로 확인
+app.post('/webhook', (req, res) => {
+  const d = req.body;
+  console.log(`[신호 옴] 단계: ${d.lifecycle}`);
 
-// 2. 서버 설정
-app.use(express.json());
+  // 1. URL 검증 (PING)
+  if (d.lifecycle === 'PING') {
+    return res.send({ pingData: { challenge: d.pingData.challenge } });
+  }
 
-app.post('/webhook', (req, res, next) => {
-  // 모든 요청을 삼성 SDK에게 넘김
-  smartApp.handleHttpCallback(req, res);
+  // 2. 인증 (CONFIRMATION)
+  // (이미 인증은 통과했으므로 단순히 URL만 반환해도 됨)
+  if (d.lifecycle === 'CONFIRMATION') {
+    return res.send({ targetUrl: d.confirmationData.confirmationUrl });
+  }
+
+  // 3. 화면 설정 (CONFIGURATION)
+  if (d.lifecycle === 'CONFIGURATION') {
+    const phase = d.configurationData.phase;
+
+    // 3-1. 초기화: "나 권한 필요 없어!"
+    if (phase === 'INITIALIZE') {
+      return res.send({
+        configurationData: {
+          initialize: {
+            name: "Test Connection",
+            description: "Just a connection test",
+            id: "app",
+            permissions: [], // ★ 중요: 권한 요청 0개
+            firstPageId: "1"
+          }
+        }
+      });
+    }
+
+    // 3-2. 화면: 센서 선택창 대신 그냥 안내 문구만
+    if (phase === 'PAGE') {
+      return res.send({
+        configurationData: {
+          page: {
+            pageId: "1",
+            name: "연결 테스트",
+            complete: true,
+            sections: [{
+              name: "확인",
+              settings: [{
+                id: "info_text",
+                name: "상태",
+                description: "이 화면이 보이면 서버 연결 성공입니다.",
+                type: "PARAGRAPH" // 기기 선택(DEVICE) 아님
+              }]
+            }]
+          }
+        }
+      });
+    }
+  }
+
+  // 4. 설치 (INSTALL) / 업데이트 (UPDATE)
+  // 무조건 성공 리턴
+  if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {
+    console.log('★ 설치 성공! (빈 껍데기 앱)');
+    return res.status(200).send({ installData: {} });
+  }
+
+  // 그 외 모든 것 OK
+  res.status(200).send({});
 });
 
-// 서버 깨우기용
-app.get('/keep-alive', (req, res) => res.send('SmartApp Server is Awake!'));
+// 깨우기용
+app.get('/keep-alive', (req, res) => res.send('Skeleton Alive!'));
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server on ${PORT}`));

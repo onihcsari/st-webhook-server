@@ -14,7 +14,7 @@ app.post('/webhook', async (req, res) => {
   const d = req.body;
   console.log(`[신호 수신] ${d.lifecycle}`);
 
-  // 1. PING & CONFIRMATION (기본)
+  // 1. PING & CONFIRMATION
   if (d.lifecycle === 'PING') {
     return res.send({ pingData: { challenge: d.pingData.challenge } });
   }
@@ -22,7 +22,7 @@ app.post('/webhook', async (req, res) => {
     return res.send({ targetUrl: d.confirmationData.confirmationUrl });
   }
 
-  // 2. 화면 설정 (CONFIGURATION)
+  // 2. CONFIGURATION (화면 설정)
   if (d.lifecycle === 'CONFIGURATION') {
     const phase = d.configurationData.phase;
 
@@ -56,7 +56,6 @@ app.post('/webhook', async (req, res) => {
                 type: "DEVICE",
                 required: true,
                 multiple: true,
-                // 기기 검색용 필터 (refresh는 웬만하면 다 있어서 검색용으로 둠)
                 capabilities: ["refresh"], 
                 permissions: ["r", "x"]
               }]
@@ -67,35 +66,37 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
-  // 3. 설치 및 업데이트 (구독 신청 - 여기가 핵심!)
+  // 3. INSTALL / UPDATE (★ 여기가 수정되었습니다!)
   if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {
-    console.log('★ 설치/업데이트 완료! Sihas 센서 구독 시작...');
+    console.log('★ 설치/업데이트 완료! 구독 시작...');
 
+    // 데이터 위치 정확히 잡기
     const installData = d.installData || d.updateData;
+    
+    // [수정 핵심] 토큰은 installData 안에 들어있습니다!
+    const authToken = installData.authToken; 
+    
     const installedApp = installData.installedApp;
-    const authToken = d.authToken;
     const installedAppId = installedApp.installedAppId;
     const sensors = installedApp.config.sensors;
 
-    // 비동기로 구독 신청 함수 호출
+    // 비동기로 구독 신청
     subscribeToSihas(sensors, installedAppId, authToken);
 
     return res.status(200).send({ installData: {} });
   }
 
-  // 4. 이벤트 수신 (실제 감지 로직)
+  // 4. EVENT (이벤트 수신)
   if (d.lifecycle === 'EVENT') {
     const events = d.eventData.deviceEvents;
     
     events.forEach(event => {
-      // 우리가 원하는 그 '방향' 데이터인지 확인
-      // capability ID가 길어서 포함 여부로 체크
+      // Sihas 센서 로직 (ready / in / out)
       if (event.capability.includes('inOutDirectionV2') || event.attribute === 'inOutDir') {
         
-        const val = event.value; // ready, in, out
+        const val = event.value; 
         const deviceId = event.deviceId;
         
-        // 사용자님 로직 적용
         let isOccupied = false;
         let statusText = "사람 없음 (빈 방)";
 
@@ -107,20 +108,15 @@ app.post('/webhook', async (req, res) => {
             statusText = "🟢 사람 없음 (Ready)";
         }
 
-        console.log(`[센서 감지] 디바이스: ${deviceId}`);
-        console.log(`   👉 원본값: ${val}`);
-        console.log(`   👉 판  단: ${statusText}`);
+        console.log(`[센서 감지] ${deviceId} : ${statusText}`);
 
-        // 나중에 Ionic 앱으로 보낼 데이터
+        // Ionic 앱으로 쏘기
         io.emit('sensor-update', {
             deviceId: deviceId,
             status: val,
             isOccupied: isOccupied,
             timestamp: new Date().toISOString()
         });
-      } else {
-        // 배터리나 다른 정보면 그냥 로그만 살짝
-        console.log(`[기타 정보] ${event.capability} -> ${event.value}`);
       }
     });
     return res.status(200).send({});
@@ -129,12 +125,12 @@ app.post('/webhook', async (req, res) => {
   res.status(200).send({});
 });
 
-// [구독 함수] Sihas 센서의 inOutDir만 콕 집어서 구독
+// [구독 함수]
 async function subscribeToSihas(sensors, installedAppId, token) {
   for (const sensor of sensors) {
     const deviceId = sensor.deviceConfig.deviceId;
     
-    // ★ 여기가 중요합니다! 정확한 Capability ID를 입력해야 합니다.
+    // 정확한 Capability 입력
     const customCapability = 'afterguide46998.inOutDirectionV2';
     const customAttribute = 'inOutDir';
 
@@ -146,21 +142,21 @@ async function subscribeToSihas(sensors, installedAppId, token) {
           device: {
             deviceId: deviceId,
             componentId: 'main',
-            capability: customCapability, // 정확한 ID 명시
-            attribute: customAttribute,   // 정확한 속성 명시
+            capability: customCapability,
+            attribute: customAttribute,
             stateChangeOnly: true,
             subscriptionName: `sub_${deviceId.substring(0,6)}`
           }
         },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}` } } // 이제 올바른 토큰이 들어갑니다!
       );
-      console.log(`✅ 구독 성공! (${deviceId}) - ${customAttribute}`);
+      console.log(`✅ 구독 성공! (${deviceId})`);
     } catch (e) {
       console.error(`❌ 구독 실패 (${deviceId}):`, e.response?.data || e.message);
     }
   }
 }
 
-app.get('/keep-alive', (req, res) => res.send('Sihas Logic Active!'));
+app.get('/keep-alive', (req, res) => res.send('Token Fixed!'));
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server on ${PORT}`));

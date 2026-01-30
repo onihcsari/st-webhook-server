@@ -13,7 +13,6 @@ app.use(bodyParser.json());
 app.post('/webhook', async (req, res) => {
   const d = req.body;
   
-  // d가 없을 경우를 대비한 방어 코드
   if (!d) return res.status(200).send({});
 
   console.log(`[신호 수신] ${d.lifecycle}`);
@@ -26,10 +25,9 @@ app.post('/webhook', async (req, res) => {
     return res.send({ targetUrl: d.confirmationData.confirmationUrl });
   }
 
-  // 2. CONFIGURATION (화면 설정)
+  // 2. CONFIGURATION
   if (d.lifecycle === 'CONFIGURATION') {
     const phase = d.configurationData.phase;
-
     if (phase === 'INITIALIZE') {
       return res.send({
         configurationData: {
@@ -43,7 +41,6 @@ app.post('/webhook', async (req, res) => {
         }
       });
     }
-
     if (phase === 'PAGE') {
       return res.send({
         configurationData: {
@@ -70,36 +67,31 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
-  // 3. INSTALL / UPDATE (구독 신청)
+  // 3. INSTALL / UPDATE (★수정됨: 청소 후 구독)
   if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {
-    console.log('★ 설치/업데이트 완료! 구독 시작...');
+    console.log('★ 설치/업데이트 신호 수신!');
 
     const installData = d.installData || d.updateData;
-    const authToken = installData.authToken; 
-    
-    const installedApp = installData.installedApp;
-    const installedAppId = installedApp.installedAppId;
-    const sensors = installedApp.config.sensors;
+    const authToken = installData.authToken;
+    const installedAppId = installData.installedApp.installedAppId;
+    const sensors = installData.installedApp.config.sensors;
 
-    subscribeToSihas(sensors, installedAppId, authToken);
+    // [중요] 기존 구독을 모두 지우고 다시 등록합니다 (비동기 처리)
+    refreshSubscriptions(sensors, installedAppId, authToken);
 
     return res.status(200).send({ installData: {} });
   }
 
-  // 4. EVENT (이벤트 수신) - ★ 여기가 에러나던 곳 (수정됨)
+  // 4. EVENT
   if (d.lifecycle === 'EVENT') {
-    // [안전장치] eventData가 없거나 deviceEvents가 비어있으면 그냥 종료
     if (!d.eventData || !d.eventData.deviceEvents) {
-        console.log('⚠️ 빈 이벤트 신호 수신 (무시함)');
         return res.status(200).send({});
     }
 
     const events = d.eventData.deviceEvents;
     
     events.forEach(event => {
-      // Sihas 센서 로직
       if (event.capability.includes('inOutDirectionV2') || event.attribute === 'inOutDir') {
-        
         const val = event.value; 
         const deviceId = event.deviceId;
         
@@ -130,10 +122,35 @@ app.post('/webhook', async (req, res) => {
   res.status(200).send({});
 });
 
-// [구독 함수]
-async function subscribeToSihas(sensors, installedAppId, token) {
-  if (!sensors || !Array.isArray(sensors)) return; // 안전장치 추가
+// [핵심 함수] 지우고 -> 다시 구독
+async function refreshSubscriptions(sensors, installedAppId, token) {
+  if (!sensors || !Array.isArray(sensors)) return;
 
+  console.log('🧹 기존 구독 삭제 시작...');
+  
+  try {
+    // 1. 기존 구독 목록 가져오기
+    const response = await axios.get(
+      `https://api.smartthings.com/v1/installedapps/${installedAppId}/subscriptions`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    
+    const oldSubscriptions = response.data.items || [];
+    
+    // 2. 하나씩 삭제하기 (Bulk delete는 가끔 에러나서 안전하게 하나씩 지움)
+    for (const sub of oldSubscriptions) {
+        await axios.delete(
+            `https://api.smartthings.com/v1/installedapps/${installedAppId}/subscriptions/${sub.subscriptionId}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+        );
+    }
+    console.log('✨ 청소 완료! 새 구독 시작...');
+
+  } catch (e) {
+    console.log('청소 중 에러(무시 가능):', e.message);
+  }
+
+  // 3. 새 구독 등록
   for (const sensor of sensors) {
     const deviceId = sensor.deviceConfig.deviceId;
     const customCapability = 'afterguide46998.inOutDirectionV2';
@@ -150,18 +167,23 @@ async function subscribeToSihas(sensors, installedAppId, token) {
             capability: customCapability,
             attribute: customAttribute,
             stateChangeOnly: true,
-            subscriptionName: `sub_${deviceId.substring(0,6)}`
+            subscriptionName: `sub_${deviceId.substring(0,8)}`
           }
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      console.log(`✅ 구독 성공! (${deviceId})`);
+      console.log(`✅ 재구독 성공! (${deviceId})`);
     } catch (e) {
-      console.error(`❌ 구독 실패 (${deviceId}):`, e.response?.data || e.message);
+      // 만약 그래도 충돌나면(409), 이미 되어있는 거니까 성공으로 간주
+      if (e.response && e.response.status === 409) {
+          console.log(`⚠️ 이미 구독됨 (성공으로 간주): ${deviceId}`);
+      } else {
+          console.error(`❌ 구독 실패 (${deviceId}):`, e.response?.data || e.message);
+      }
     }
   }
 }
 
-app.get('/keep-alive', (req, res) => res.send('Safety Patch Applied!'));
+app.get('/keep-alive', (req, res) => res.send('Clean & Subscribe Logic!'));
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server on ${PORT}`));

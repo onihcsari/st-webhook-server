@@ -7,7 +7,7 @@ const cors = require('cors');
 
 const app = express();
 
-// CORS 허용
+// CORS 허용 (앱 연결 필수)
 app.use(cors({ origin: '*', methods: ['GET', 'POST'] }));
 
 const server = http.createServer(app);
@@ -21,11 +21,7 @@ app.post('/webhook', async (req, res) => {
   const d = req.body;
   if (!d) return res.status(200).send({});
 
-  // 1. 무슨 신호인지 먼저 출력
-  console.log(`\n========================================`);
-  console.log(`[신호 수신] 타입: ${d.lifecycle}`);
-
-  // 2. PING & CONFIRMATION
+  // 1. PING & CONFIRMATION
   if (d.lifecycle === 'PING') {
     return res.send({ pingData: { challenge: d.pingData.challenge } });
   }
@@ -33,18 +29,15 @@ app.post('/webhook', async (req, res) => {
     return res.send({ targetUrl: d.confirmationData.confirmationUrl });
   }
 
-  // 3. CONFIGURATION
+  // 2. CONFIGURATION
   if (d.lifecycle === 'CONFIGURATION') {
-    // ... (기존 설정 코드 유지 - 길어서 생략하지만 실제 파일엔 있어야 함) ...
-    // 설정을 바꾸진 않으셨을 테니 이 부분은 Render에서 기존 그대로 둬도 됩니다.
-    // 혹시 모르니 전체 코드를 원하시면 말씀하세요. 일단 EVENT가 급하니 넘어가겠습니다.
     const phase = d.configurationData.phase;
     if (phase === 'INITIALIZE') {
       return res.send({
         configurationData: {
           initialize: {
             name: "Sihas Monitor",
-            description: "디버깅 모드",
+            description: "사람 유무 감지",
             id: "app",
             permissions: ["r:devices:*", "x:devices:*"],
             firstPageId: "1"
@@ -78,41 +71,55 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
-  // 4. INSTALL / UPDATE
+  // 3. INSTALL / UPDATE
   if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {
-    console.log('★ 설치/업데이트 신호');
+    console.log('★ 설치/업데이트 완료');
     return res.status(200).send({ installData: {} });
   }
 
-  // ★★★ 5. EVENT (여기가 핵심 수정!) ★★★
+  // ★★★ 4. EVENT (여기가 수정되었습니다!) ★★★
   if (d.lifecycle === 'EVENT') {
-    console.log("🔍 [RAW DATA 확인]");
-    // 들어온 데이터를 문자열로 바꿔서 통째로 출력 (짤림 없이)
-    console.log(JSON.stringify(d, null, 2));
-    
-    // 강제로 소켓 쏴보기 (데이터 구조 무시하고 테스트)
-    if (d.eventData && d.eventData.deviceEvents) {
-        d.eventData.deviceEvents.forEach(evt => {
-            console.log(`👉 감지된 값: ${evt.value} (ID: ${evt.deviceId})`);
-            
-            // 앱으로 무조건 전송
-            io.emit('sensor-update', {
-                deviceId: evt.deviceId,
-                status: evt.value,
-                isOccupied: (evt.value === 'in' || evt.value === 'out')
-            });
+    // 로그로 확인한 구조: d.eventData.events[...]
+    const eventData = d.eventData;
+
+    if (eventData && eventData.events) {
+        // 배열 안에 있는 이벤트를 하나씩 꺼냅니다.
+        eventData.events.forEach(item => {
+            // "DEVICE_EVENT" 타입인지 확인하고, 실제 데이터를 꺼냄
+            if (item.eventType === 'DEVICE_EVENT' && item.deviceEvent) {
+                const event = item.deviceEvent; // 여기가 진짜 데이터!
+
+                console.log(`⚡ [감지됨] ID: ${event.deviceId} / 값: ${event.value}`);
+
+                // Sihas 센서 로직
+                // (capability 이름이 길어서 포함 여부로 체크)
+                if (event.capability.includes('inOutDirectionV2') || event.attribute === 'inOutDir') {
+                    
+                    const val = event.value; // in, out, ready
+                    const isOccupied = (val === 'in' || val === 'out');
+
+                    console.log(`📢 앱으로 전송: ${val}`);
+
+                    io.emit('sensor-update', {
+                        deviceId: event.deviceId,
+                        status: val,
+                        isOccupied: isOccupied,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+            }
         });
     } else {
-        console.log("⚠️ eventData 혹은 deviceEvents가 비어있음!");
+        // events 배열이 없는 경우
+        console.log("⚠️ 데이터 구조가 다름 (events 배열 없음)");
     }
 
-    console.log(`========================================\n`);
     return res.status(200).send({});
   }
 
   res.status(200).send({});
 });
 
-app.get('/keep-alive', (req, res) => res.send('Debug Mode On'));
+app.get('/keep-alive', (req, res) => res.send('Structure Fixed!'));
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server on ${PORT}`));

@@ -8,7 +8,6 @@ app.post('/webhook', (req, res) => {
   const d = req.body;
   console.log(`[신호 수신] ${d.lifecycle}`);
 
-  // 1. PING & CONFIRMATION (기존 유지)
   if (d.lifecycle === 'PING') {
     return res.send({ pingData: { challenge: d.pingData.challenge } });
   }
@@ -16,43 +15,41 @@ app.post('/webhook', (req, res) => {
     return res.send({ targetUrl: d.confirmationData.confirmationUrl });
   }
 
-  // 2. 화면 설정 (여기가 핵심!)
   if (d.lifecycle === 'CONFIGURATION') {
     const phase = d.configurationData.phase;
 
-    // 2-1. 권한 요청 (이제 권한을 요구합니다!)
     if (phase === 'INITIALIZE') {
       return res.send({
         configurationData: {
           initialize: {
             name: "Room Monitor",
-            description: "센서 선택 테스트",
+            description: "모든 기기 연결 테스트",
             id: "app",
-            permissions: ["r:devices:*", "x:devices:*"], // ★ 권한 필수!
+            permissions: ["r:devices:*", "x:devices:*"],
             firstPageId: "1"
           }
         }
       });
     }
 
-    // 2-2. 센서 선택창 띄우기
     if (phase === 'PAGE') {
       return res.send({
         configurationData: {
           page: {
             pageId: "1",
-            name: "센서 연결",
+            name: "기기 선택",
             complete: true,
             sections: [{
-              name: "센서 목록",
+              name: "기기 목록",
               settings: [{
-                id: "sensors", // 이 ID로 나중에 데이터를 찾습니다
-                name: "접촉 센서 선택하세요",
-                description: "방에 있는 센서 체크",
+                id: "sensors",
+                name: "연결할 기기 선택",
+                description: "목록에 보이는 기기를 체크하세요",
                 type: "DEVICE",
                 required: true,
                 multiple: true,
-                capabilities: ["contactSensor"], // 접촉 센서만 필터링
+                // ★ 여기가 핵심 수정 사항! (필터를 넓혔습니다)
+                capabilities: ["contactSensor", "motionSensor", "switch", "light", "button"], 
                 permissions: ["r", "x"]
               }]
             }]
@@ -62,20 +59,18 @@ app.post('/webhook', (req, res) => {
     }
   }
 
-  // 3. 설치 완료 (INSTALL)
   if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {
-    console.log('★ 설치 버튼 눌림!');
+    console.log('★ 기기 선택 및 설치 완료!');
+    // 선택한 기기가 뭔지 로그로 확인
+    const selected = d.configurationData.installedApp.config.sensors;
+    console.log('선택된 기기들:', JSON.stringify(selected, null, 2));
     
-    // 사용자가 선택한 센서 정보가 여기 들어있습니다.
-    const selectedSensors = d.configurationData.installedApp.config.sensors;
-    console.log('선택된 센서 데이터:', JSON.stringify(selectedSensors, null, 2));
-
     return res.status(200).send({ installData: {} });
   }
 
   res.status(200).send({});
 });
 
-app.get('/keep-alive', (req, res) => res.send('Step 2 Alive!'));
+app.get('/keep-alive', (req, res) => res.send('Filter Updated!'));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server on ${PORT}`));

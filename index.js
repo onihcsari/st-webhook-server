@@ -15,10 +15,32 @@ const io = new Server(server, {
 
 app.use(bodyParser.json());
 
-// ★★★ [중요] ID 매칭 (센서ID : 조명ID) ★★★
+// ★★★ [설정] 8개 방 매칭 (센서ID : 조명ID) ★★★
+// 센서 ID는 Render 로그 보시고 채워 넣으셔야 합니다!
 const ROOM_MAP = {
-    // 1번방 (새로 산 모션 센서 : 지그비 조명)
+    // 1번방 (아까 확인된 센서 : Zigbee Light 1)
     '1dc526f0-c8ab-49e8-b173-777c637c75f5': 'e810bfe9-c6f6-4479-9345-0e5d56612d6b',
+
+    // 2번방 (센서ID : Zigbee Light 2)
+    '여기에_2번방_센서ID_입력': 'a6b69078-213e-4064-bffc-e0cf125ac7e4',
+
+    // 3번방 (센서ID : Zigbee Light 3)
+    '여기에_3번방_센서ID_입력': '142bd1dd-89b2-41a8-953b-5f565c239d16',
+
+    // 4번방 (센서ID : Zigbee Light 4)
+    '여기에_4번방_센서ID_입력': '9146fc15-56b6-4362-bac3-8d676f2ec16a',
+
+    // 5번방 (센서ID : Zigbee Light 5)
+    '여기에_5번방_센서ID_입력': '00335cf1-7b07-4d09-8490-a7c7c1538988',
+
+    // 6번방 (센서ID : Zigbee Light 6)
+    '여기에_6번방_센서ID_입력': '19d8eb82-41e7-4fe0-a1d0-f76f5dce3fac',
+
+    // 7번방 (센서ID : Zigbee Light 7)
+    '여기에_7번방_센서ID_입력': '3065b27f-0f2d-4271-82cd-1539d6db6fdd',
+
+    // 8번방 (센서ID : Zigbee Light 8)
+    '여기에_8번방_센서ID_입력': '0870ec1e-ed17-4895-bf3e-929f8014a4e9',
 };
 
 app.post('/webhook', async (req, res) => {
@@ -36,8 +58,8 @@ app.post('/webhook', async (req, res) => {
       return res.send({
         configurationData: {
           initialize: {
-            name: "Sihas Motion Monitor",
-            description: "모션 감지 및 조명 제어",
+            name: "Sihas 8 Room Controller",
+            description: "8개 공간 제어 시스템",
             id: "app",
             permissions: ["r:devices:*", "x:devices:*"],
             firstPageId: "1"
@@ -53,22 +75,22 @@ app.post('/webhook', async (req, res) => {
             name: "기기 선택",
             complete: true,
             sections: [{
-              name: "센서 & 조명 설정",
+              name: "전체 기기 등록",
               settings: [
                 {
                     id: "sensors",
-                    name: "모션 센서 선택",
-                    description: "새로 산 모션 센서를 선택하세요",
+                    name: "센서 8개 모두 선택",
+                    description: "사용할 모션 센서를 모두 체크하세요",
                     type: "DEVICE",
                     required: true,
                     multiple: true,
-                    capabilities: ["motionSensor"], // ★ 모션 센서만 보이게 필터링
+                    capabilities: ["motionSensor"], 
                     permissions: ["r", "x"]
                 },
                 {
                     id: "lights", 
-                    name: "조명 선택",
-                    description: "제어할 조명을 선택하세요",
+                    name: "조명 8개 모두 선택",
+                    description: "사용할 조명을 모두 체크하세요",
                     type: "DEVICE",
                     required: true,
                     multiple: true,
@@ -83,7 +105,7 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
-  // 3. INSTALL / UPDATE (구독 신청)
+  // 3. INSTALL / UPDATE
   if (d.lifecycle === 'INSTALL' || d.lifecycle === 'UPDATE') {
     console.log('★ 설정 변경! 구독을 갱신합니다.');
     const data = d.installData || d.updateData;
@@ -95,7 +117,7 @@ app.post('/webhook', async (req, res) => {
     return res.status(200).send({ installData: {} });
   }
 
-  // ★★★ 4. EVENT (핵심 로직: 모션 감지 -> 앱 전송 -> 조명 제어) ★★★
+  // 4. EVENT
   if (d.lifecycle === 'EVENT') {
     const eventData = d.eventData;
     const authToken = eventData.authToken; 
@@ -105,17 +127,15 @@ app.post('/webhook', async (req, res) => {
             if (item.eventType === 'DEVICE_EVENT' && item.deviceEvent) {
                 const event = item.deviceEvent;
                 
-                // ★ 여기가 바뀌었습니다! (motionSensor 체크)
+                // 모션 센서 이벤트 체크
                 if (event.capability === 'motionSensor' && event.attribute === 'motion') {
                     const sensorId = event.deviceId;
-                    const val = event.value; // 'active' 또는 'inactive'
-                    
-                    // active면 사람 있음(true), inactive면 없음(false)
+                    const val = event.value; // 'active' or 'inactive'
                     const isOccupied = (val === 'active'); 
 
-                    console.log(`⚡ [모션감지] ${sensorId} -> ${val} (사람있음: ${isOccupied})`);
+                    console.log(`⚡ [감지] ${sensorId} -> ${val}`);
 
-                    // 1) 앱으로 상태 전송
+                    // 1) 앱으로 전송
                     io.emit('sensor-update', {
                         deviceId: sensorId,
                         status: val,
@@ -123,15 +143,16 @@ app.post('/webhook', async (req, res) => {
                         timestamp: new Date().toISOString()
                     });
 
-                    // 2) 조명 제어 (자동화)
+                    // 2) 조명 제어
                     const targetLightId = ROOM_MAP[sensorId];
 
                     if (targetLightId) {
-                        const command = isOccupied ? 'on' : 'off'; // 사람 있으면 ON, 없으면 OFF
-                        console.log(`💡 [제어] 조명(${targetLightId})을 ${command} 시킵니다.`);
+                        const command = isOccupied ? 'on' : 'off';
+                        console.log(`💡 [제어] 조명(${targetLightId}) -> ${command}`);
                         controlLight(targetLightId, command, authToken);
                     } else {
-                        console.log(`⚠️ [알림] 매칭된 조명이 없습니다.`);
+                        // 만약 여기에 로그가 찍히면, 그 센서 ID를 복사해서 위 ROOM_MAP에 채워넣으세요!
+                        console.log(`⚠️ [알림] 등록되지 않은 센서 ID입니다: ${sensorId}`);
                     }
                 }
             }
@@ -143,7 +164,7 @@ app.post('/webhook', async (req, res) => {
   res.status(200).send({});
 });
 
-// [함수 1] 센서 구독 (모션 센서용으로 변경됨)
+// 구독 함수
 async function subscribeToSensors(sensors, installedAppId, token) {
     if (!sensors) return;
     for (const sensor of sensors) {
@@ -156,20 +177,20 @@ async function subscribeToSensors(sensors, installedAppId, token) {
                     device: {
                         deviceId: deviceId,
                         componentId: 'main',
-                        capability: 'motionSensor', // ★ 모션 센서 구독
-                        attribute: 'motion',        // ★ 모션 값 구독
+                        capability: 'motionSensor',
+                        attribute: 'motion',
                         stateChangeOnly: true,
                         subscriptionName: `sub_${deviceId.substring(0, 8)}`
                     }
                 },
                 { headers: { Authorization: `Bearer ${token}` } }
             );
-        } catch (e) { /* 에러 무시 */ }
+        } catch (e) { console.log('구독 에러(무시 가능)'); }
     }
     console.log(`✅ ${sensors.length}개 센서 구독 완료`);
 }
 
-// [함수 2] 조명 제어 (그대로)
+// 제어 함수
 async function controlLight(deviceId, command, token) {
     try {
         await axios.post(
@@ -184,12 +205,11 @@ async function controlLight(deviceId, command, token) {
             },
             { headers: { Authorization: `Bearer ${token}` } }
         );
-        console.log(`   👉 명령 전송 성공: ${command}`);
     } catch (e) {
-        console.error(`   ❌ 조명 제어 실패: ${e.message}`);
+        console.error(`❌ 제어 실패: ${e.message}`);
     }
 }
 
-app.get('/keep-alive', (req, res) => res.send('Motion Server Running'));
+app.get('/keep-alive', (req, res) => res.send('Server Running'));
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on ${PORT}`));

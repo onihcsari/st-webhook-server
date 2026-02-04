@@ -22,25 +22,25 @@ const ROOM_MAP = {
     '1dc526f0-c8ab-49e8-b173-777c637c75f5': 'e810bfe9-c6f6-4479-9345-0e5d56612d6b',
 
     // 2번방 (센서ID : Zigbee Light 2)
-    '여기에_2번방_센서ID_입력': 'a6b69078-213e-4064-bffc-e0cf125ac7e4',
+    'd9a75eff-b93d-4ec9-85e7-d465defd0ec7': 'a6b69078-213e-4064-bffc-e0cf125ac7e4',
 
     // 3번방 (센서ID : Zigbee Light 3)
-    '여기에_3번방_센서ID_입력': '142bd1dd-89b2-41a8-953b-5f565c239d16',
+    'eb82a930-e6fc-4453-87b3-f7112cac3edc': '142bd1dd-89b2-41a8-953b-5f565c239d16',
 
     // 4번방 (센서ID : Zigbee Light 4)
-    '여기에_4번방_센서ID_입력': '9146fc15-56b6-4362-bac3-8d676f2ec16a',
+    '25ab5a94-6e64-4262-8065-7e0f022ff0d7': '9146fc15-56b6-4362-bac3-8d676f2ec16a',
 
     // 5번방 (센서ID : Zigbee Light 5)
-    '여기에_5번방_센서ID_입력': '00335cf1-7b07-4d09-8490-a7c7c1538988',
+    '57a46409-94e8-4e3b-8c37-25b71cd1be26': '00335cf1-7b07-4d09-8490-a7c7c1538988',
 
     // 6번방 (센서ID : Zigbee Light 6)
-    '여기에_6번방_센서ID_입력': '19d8eb82-41e7-4fe0-a1d0-f76f5dce3fac',
+    'e5b1efdf-4ac5-47cf-a813-0d238adc83ab': '19d8eb82-41e7-4fe0-a1d0-f76f5dce3fac',
 
     // 7번방 (센서ID : Zigbee Light 7)
-    '여기에_7번방_센서ID_입력': '3065b27f-0f2d-4271-82cd-1539d6db6fdd',
+    '68a70a08-184d-4ea7-92d4-ff0214bd56fd': '3065b27f-0f2d-4271-82cd-1539d6db6fdd',
 
     // 8번방 (센서ID : Zigbee Light 8)
-    '여기에_8번방_센서ID_입력': '0870ec1e-ed17-4895-bf3e-929f8014a4e9',
+    '519a2fc8-722f-4bd9-9a59-c3fd0ef8d792': '0870ec1e-ed17-4895-bf3e-929f8014a4e9',
 };
 
 app.post('/webhook', async (req, res) => {
